@@ -54,7 +54,7 @@
           this.palmMesh.setAttribute('material', 'wireframe: true; emissive: #10B981; emissiveIntensity: 0.6');
           this.el.appendChild(this.palmMesh);
 
-          // Listen ONLY to hand pinch events for traction
+          // Listen for pinch/crawl gestures
           this.el.addEventListener('pinchstarted', (e) => this.onCrawlStart(e));
           this.el.addEventListener('pinchend', () => this.onCrawlEnd());
         },
@@ -77,12 +77,12 @@
           const rawHandPos = new THREE.Vector3();
           handObj.getWorldPosition(rawHandPos);
 
-          // Force gravity downwards onto tabletop if tracked raw position is floating high
+          // Apply gravity down to tabletop surface if floating high
           if (handObj.position.y > this.tableY) {
             this.velocity += this.gravity * dt;
             this.isGrounded = false;
           } else {
-            // Clamp to tabletop
+            // Rest flat on desk surface
             handObj.position.y = this.tableY;
             this.velocity = 0;
             this.isGrounded = true;
@@ -91,19 +91,19 @@
           // Apply downwards fall towards table
           handObj.position.y += this.velocity * dt;
 
-          // Crawling motion across the desk surface
+          // Crawling motion across desk surface
           if (this.prevPinchPos) {
             const deltaX = rawHandPos.x - this.prevPinchPos.x;
             const deltaZ = rawHandPos.z - this.prevPinchPos.z;
 
-            // Pull spider palm along desk surface
+            // Move spider palm across table surface
             handObj.position.x += deltaX * 1.8;
             handObj.position.z += deltaZ * 1.8;
 
             this.prevPinchPos.copy(rawHandPos);
           }
 
-          // Check Button Hit
+          // Check Target Button Collision
           const buttonEl = document.querySelector('#target-button');
           if (buttonEl) {
             const btnPos = buttonEl.object3D.position;
@@ -165,19 +165,17 @@
       });
     </script>
 
-    <!-- Strictly Require Hand Tracking -->
-    <a-scene webxr="optionalFeatures: hand-tracking; requiredFeatures: hand-tracking;">
+    <!-- Clean WebXR Configuration -->
+    <a-scene webxr="optionalFeatures: hand-tracking;">
       <a-sky color="#050811"></a-sky>
       <a-ambient-light color="#ffffff" intensity="0.5"></a-ambient-light>
       <a-spotlight position="0 2.5 -0.5" intensity="1.4" angle="45" penumbra="0.5"></a-spotlight>
 
       <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#0f172a" gridhelper="size: 20; divisions: 20; colorCenterLine: #10B981; colorGrid: #1e293b"></a-plane>
 
-      <!-- Desk / Tabletop (Height set to Y=1.0m directly in front of camera) -->
+      <!-- Tabletop (Height set to Y=1.0m directly in front of view) -->
       <a-entity id="table" position="0 0.96 -0.7">
-        <!-- Table surface -->
         <a-box width="1.6" height="0.08" depth="0.8" color="#1e293b" material="roughness: 0.4; metalness: 0.2"></a-box>
-        <!-- Table Legs -->
         <a-cylinder position="-0.7 -0.48 -0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
         <a-cylinder position="0.7 -0.48 -0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
         <a-cylinder position="-0.7 -0.48 0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
@@ -199,7 +197,7 @@
       <a-entity id="rig" position="0 0 0">
         <a-camera position="0 1.5 0"></a-camera>
 
-        <!-- Hand Tracking ONLY (No controllers, forced mesh tracking) -->
+        <!-- Pure Hand Tracking Entities -->
         <a-entity id="left-hand"
                   hand-tracking-controls="hand: left; modelStyle: mesh;"
                   spider-hand-physics="hand: left">
