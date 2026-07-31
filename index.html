@@ -2,8 +2,9 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>VR Hand Tracking - Telekinesis Lab</title>
+    <title>Hand Spider - Desktop Crawl VR</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- A-Frame Library -->
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <style>
       body { margin: 0; overflow: hidden; background: #000; }
@@ -11,188 +12,225 @@
   </head>
   <body>
     <script>
-      // Global state & Telekinesis Component
-      AFRAME.registerComponent('telekinesis-hand', {
+      let currentLevel = 1;
+      const totalLevels = 3;
+
+      // Level layout configs (Table obstacles and button locations)
+      const levelData = {
+        1: {
+          buttonPos: { x: 0, y: 0.86, z: -1.4 },
+          obstacles: []
+        },
+        2: {
+          buttonPos: { x: 0.4, y: 0.86, z: -1.5 },
+          obstacles: [
+            { pos: "0 0.9 -1.2", size: "0.4 0.15 0.1", color: "#EF4444" } // Wooden barrier
+          ]
+        },
+        3: {
+          buttonPos: { x: -0.5, y: 0.86, z: -1.6 },
+          obstacles: [
+            { pos: "-0.2 0.9 -1.3", size: "0.15 0.2 0.3", color: "#F59E0B" },
+            { pos: "0.2 0.9 -1.1", size: "0.2 0.15 0.2", color: "#8B5CF6" }
+          ]
+        }
+      };
+
+      // Physics & Surface Crawling Component for Hand
+      AFRAME.registerComponent('spider-hand-physics', {
         schema: {
           hand: { type: 'string', default: 'right' }
         },
 
         init: function () {
-          this.grabbedEl = null;
-          this.hoveredEl = null;
-          this.isGrabbing = false;
-          this.prevPinchState = false;
+          this.tableY = 0.84; // Level of tabletop surface
+          this.velocity = new THREE.Vector3(0, 0, 0);
+          this.gravity = -9.8;
+          this.isGrounded = false;
+          this.prevPinchPos = null;
 
-          // Target reticle visualizer
-          this.reticle = document.createElement('a-ring');
-          this.reticle.setAttribute('radius-inner', '0.04');
-          this.reticle.setAttribute('radius-outer', '0.06');
-          this.reticle.setAttribute('material', 'color: #00E5FF; shader: flat; transparent: true; opacity: 0');
-          this.reticle.setAttribute('visible', 'false');
-          this.el.sceneEl.appendChild(this.reticle);
+          // Virtual physics palm representation
+          this.palmMesh = document.createElement('a-sphere');
+          this.palmMesh.setAttribute('radius', '0.05');
+          this.palmMesh.setAttribute('color', '#10B981');
+          this.palmMesh.setAttribute('material', 'wireframe: true; emissive: #10B981; emissiveIntensity: 0.5');
+          this.el.appendChild(this.palmMesh);
 
-          // Listen for WebXR pinch events (supported on Quest / Vision Pro)
-          this.el.addEventListener('pinchstarted', () => this.onPinchStart());
-          this.el.addEventListener('pinchend', () => this.onPinchEnd());
-
-          // Desktop fallback trigger (Mouse Click / Trigger simulate grab)
-          this.el.addEventListener('triggerdown', () => this.onPinchStart());
-          this.el.addEventListener('triggerup', () => this.onPinchEnd());
+          // Finger pinch event listeners for crawl traction
+          this.el.addEventListener('pinchstarted', (e) => this.onCrawlStart(e));
+          this.el.addEventListener('pinchend', () => this.onCrawlEnd());
         },
 
-        onPinchStart: function () {
-          this.isGrabbing = true;
-
-          // Force Grab: Pull hovered object to hand if pointing at one
-          if (this.hoveredEl && !this.grabbedEl) {
-            this.grabbedEl = this.hoveredEl;
-            this.grabbedEl.setAttribute('telekinetic-state', 'pulling');
-            
-            // Visual feedback ring glow
-            if (this.grabbedEl.components['glow-highlight']) {
-              this.grabbedEl.components['glow-highlight'].setGlow('#FF007F');
-            }
-          }
+        onCrawlStart: function (e) {
+          // Store start position when fingertip touches surface to pull/crawl
+          const rawHandPos = new THREE.Vector3();
+          this.el.object3D.getWorldPosition(rawHandPos);
+          this.prevPinchPos = rawHandPos.clone();
         },
 
-        onPinchEnd: function () {
-          this.isGrabbing = false;
-
-          if (this.grabbedEl) {
-            // Release item
-            this.grabbedEl.setAttribute('telekinetic-state', 'idle');
-            if (this.grabbedEl.components['glow-highlight']) {
-              this.grabbedEl.components['glow-highlight'].resetGlow();
-            }
-            this.grabbedEl = null;
-          }
+        onCrawlEnd: function () {
+          this.prevPinchPos = null;
         },
 
         tick: function (time, delta) {
-          const handPos = new THREE.Vector3();
-          this.el.object3D.getWorldPosition(handPos);
+          if (!delta) return;
+          const dt = delta / 1000; // convert to seconds
 
-          // Get raycaster direction from hand
-          const raycasterComp = this.el.components.raycaster;
-          let intersectedEl = null;
+          const handPos = this.el.object3D.position;
+          const rawHandPos = new THREE.Vector3();
+          this.el.object3D.getWorldPosition(rawHandPos);
 
-          if (raycasterComp && raycasterComp.intersections.length > 0) {
-            intersectedEl = raycasterComp.intersections[0].object.el;
-          }
-
-          // Handle Hover Highlighting
-          if (intersectedEl !== this.hoveredEl && !this.grabbedEl) {
-            if (this.hoveredEl && this.hoveredEl.components['glow-highlight']) {
-              this.hoveredEl.components['glow-highlight'].resetGlow();
-            }
-            this.hoveredEl = intersectedEl;
-
-            if (this.hoveredEl && this.hoveredEl.components['glow-highlight']) {
-              this.hoveredEl.components['glow-highlight'].setGlow('#00E5FF');
-            }
-          }
-
-          // Update Reticle position
-          if (this.hoveredEl && !this.grabbedEl) {
-            const targetPos = new THREE.Vector3();
-            this.hoveredEl.object3D.getWorldPosition(targetPos);
-            this.reticle.setAttribute('position', targetPos);
-            this.reticle.setAttribute('visible', 'true');
-            this.reticle.setAttribute('material', 'opacity', '0.8');
+          // 1. Apply Gravity towards the table surface
+          if (handPos.y > this.tableY) {
+            this.velocity.y += this.gravity * dt;
+            this.isGrounded = false;
           } else {
-            this.reticle.setAttribute('visible', 'false');
+            // Resting flat on table
+            handPos.y = this.tableY;
+            this.velocity.y = 0;
+            this.isGrounded = true;
           }
 
-          // Move pulled object towards palm
-          if (this.grabbedEl) {
-            const objPos = this.grabbedEl.object3D.position;
-            
-            // Interpolate position toward hand (Telekinetic fly speed)
-            const speed = 0.12; 
-            objPos.lerp(handPos, speed);
+          // Apply fall velocity
+          handPos.y += this.velocity.y * dt;
 
-            // Slightly float and rotate item while held in air
-            this.grabbedEl.object3D.rotation.y += 0.02;
-            this.grabbedEl.object3D.rotation.x += 0.01;
+          // 2. Spider Crawling Movement
+          // When pinched/crawling on table, drag hand position along surface based on finger motion
+          if (this.isGrounded && this.prevPinchPos) {
+            const deltaX = rawHandPos.x - this.prevPinchPos.x;
+            const deltaZ = rawHandPos.z - this.prevPinchPos.z;
+
+            // Push/Pull palm forward across the table surface
+            handPos.x += deltaX * 1.5;
+            handPos.z += deltaZ * 1.5;
+
+            this.prevPinchPos.copy(rawHandPos);
           }
+
+          // 3. Check Collision with Target Button
+          const buttonEl = document.querySelector('#target-button');
+          if (buttonEl) {
+            const btnPos = buttonEl.object3D.position;
+            const dist = handPos.distanceTo(btnPos);
+
+            // Trigger button press if spider hand hits it
+            if (dist < 0.15) {
+              this.onPressButton();
+            }
+          }
+        },
+
+        onPressButton: function () {
+          const btnMesh = document.querySelector('#button-cap');
+          if (btnMesh) {
+            btnMesh.setAttribute('position', '0 0.01 0'); // Push button down visual
+          }
+
+          // Advance level
+          setTimeout(() => {
+            if (currentLevel < totalLevels) {
+              currentLevel++;
+              loadLevel(currentLevel);
+            } else {
+              // Game complete
+              const txt = document.querySelector('#hud-text');
+              if (txt) txt.setAttribute('value', 'VICTORY!\nYou beat all levels!');
+            }
+          }, 300);
         }
       });
 
-      // Simple highlight effect for telekinetic targets
-      AFRAME.registerComponent('glow-highlight', {
-        init: function () {
-          this.originalColor = this.el.getAttribute('color') || '#ffffff';
-        },
-        setGlow: function (colorHex) {
-          this.el.setAttribute('material', 'emissive', colorHex);
-          this.el.setAttribute('material', 'emissiveIntensity', '0.6');
-        },
-        resetGlow: function () {
-          this.el.setAttribute('material', 'emissive', '#000000');
-          this.el.setAttribute('material', 'emissiveIntensity', '0');
-        }
+      // Function to dynamically load obstacles and level targets
+      function loadLevel(levelNum) {
+        const data = levelData[levelNum];
+        
+        // Update HUD
+        const txt = document.querySelector('#hud-text');
+        if (txt) txt.setAttribute('value', `LEVEL ${levelNum} / ${totalLevels}\nCrawl your hand spider to the red button!`);
+
+        // Move Button
+        const buttonGroup = document.querySelector('#target-button');
+        buttonGroup.setAttribute('position', `${data.buttonPos.x} ${data.buttonPos.y} ${data.buttonPos.z}`);
+        
+        const btnMesh = document.querySelector('#button-cap');
+        if (btnMesh) btnMesh.setAttribute('position', '0 0.04 0');
+
+        // Clear existing obstacles
+        const obsContainer = document.querySelector('#obstacles-container');
+        obsContainer.innerHTML = '';
+
+        // Spawn Level Obstacles
+        data.obstacles.forEach((obs) => {
+          const box = document.createElement('a-box');
+          const [w, h, d] = obs.size.split(' ');
+          box.setAttribute('position', obs.pos);
+          box.setAttribute('width', w);
+          box.setAttribute('height', h);
+          box.setAttribute('depth', d);
+          box.setAttribute('color', obs.color);
+          obsContainer.appendChild(box);
+        });
+
+        // Reset hand positions
+        const rightHand = document.querySelector('#right-hand');
+        if (rightHand) rightHand.object3D.position.set(0, 1.2, -0.8);
+      }
+
+      window.addEventListener('load', () => {
+        setTimeout(() => loadLevel(1), 500);
       });
     </script>
 
-    <a-scene webxr="optionalFeatures: hand-tracking, hit-test">
-      <!-- Environment & Sky -->
-      <a-sky color="#0a0c10"></a-sky>
-      <a-ambient-light color="#ffffff" intensity="0.5"></a-ambient-light>
-      <a-directional-light position="-2 4 1" intensity="0.9" cast-shadow="true"></a-directional-light>
+    <a-scene webxr="optionalFeatures: hand-tracking">
+      <!-- Lighting & Dark Atmospheric Room -->
+      <a-sky color="#050811"></a-sky>
+      <a-ambient-light color="#ffffff" intensity="0.4"></a-ambient-light>
+      <a-spotlight position="0 3 -1" intensity="1.2" angle="45" penumbra="0.5" cast-shadow="true"></a-spotlight>
 
-      <!-- Grid Floor -->
-      <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#111827" gridhelper="size: 20; divisions: 20; colorCenterLine: #00E5FF; colorGrid: #1F2937"></a-plane>
+      <!-- Floor -->
+      <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#0f172a" gridhelper="size: 20; divisions: 20; colorCenterLine: #10B981; colorGrid: #1e293b"></a-plane>
 
-      <!-- The Workbench / Table -->
-      <a-entity id="table" position="0 0.8 -1.2">
+      <!-- The Workbench / Table Surface -->
+      <a-entity id="table" position="0 0.8 -1.3">
         <!-- Tabletop -->
-        <a-box width="2.2" height="0.08" depth="1.0" color="#1E293B" material="roughness: 0.3; metalness: 0.5"></a-box>
+        <a-box width="2.0" height="0.08" depth="1.2" color="#1e293b" material="roughness: 0.4; metalness: 0.2"></a-box>
         <!-- Table Legs -->
-        <a-cylinder position="-1.0 -0.4 -0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
-        <a-cylinder position="1.0 -0.4 -0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
-        <a-cylinder position="-1.0 -0.4 0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
-        <a-cylinder position="1.0 -0.4 0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
+        <a-cylinder position="-0.9 -0.4 -0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
+        <a-cylinder position="0.9 -0.4 -0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
+        <a-cylinder position="-0.9 -0.4 0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
+        <a-cylinder position="0.9 -0.4 0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
       </a-entity>
 
-      <!-- Interactive Telekinetic Objects on the Table -->
-      <a-entity id="objects-group">
-        <!-- Cube -->
-        <a-box class="telekinetic" glow-highlight position="-0.6 0.95 -1.2" width="0.18" height="0.18" depth="0.18" color="#FF2D55"></a-box>
-        <!-- Glowing Energy Orb -->
-        <a-sphere class="telekinetic" glow-highlight position="-0.2 0.95 -1.1" radius="0.1" color="#00E5FF"></a-sphere>
-        <!-- Pyramid / Cone -->
-        <a-cone class="telekinetic" glow-highlight position="0.2 0.95 -1.3" radius-bottom="0.1" height="0.2" color="#FFCC00"></a-cone>
-        <!-- Cylinder Container -->
-        <a-cylinder class="telekinetic" glow-highlight position="0.6 0.95 -1.1" radius="0.08" height="0.22" color="#A855F7"></a-cylinder>
+      <!-- Container for dynamic level obstacles -->
+      <a-entity id="obstacles-container"></a-entity>
+
+      <!-- Interactive Goal Button -->
+      <a-entity id="target-button" position="0 0.86 -1.4">
+        <!-- Button Base -->
+        <a-cylinder radius="0.12" height="0.04" color="#334155"></a-cylinder>
+        <!-- Red Pressable Cap -->
+        <a-cylinder id="button-cap" position="0 0.04 0" radius="0.09" height="0.04" color="#EF4444" material="emissive: #EF4444; emissiveIntensity: 0.4"></a-cylinder>
       </a-entity>
 
-      <!-- Floating Instructions Title -->
-      <a-text value="TELEKINESIS LAB\nPoint at an item & quick pinch/close hand to summon it" position="0 2.2 -1.8" align="center" color="#00E5FF" width="4" font="mozillavr"></a-text>
+      <!-- HUD Level Instructions -->
+      <a-text id="hud-text" value="LEVEL 1\nCrawl your hand spider to the red button!" position="0 2.1 -1.6" align="center" color="#10B981" width="4" font="mozillavr"></a-text>
 
-      <!-- Camera & Player Setup -->
+      <!-- Player Rig -->
       <a-entity id="rig" position="0 0 0">
         <a-camera position="0 1.6 0">
-          <!-- Cursor for testing with mouse on desktop -->
-          <a-cursor objects=".telekinetic" color="#00E5FF" raycaster="objects: .telekinetic; far: 5"></a-cursor>
+          <a-cursor color="#10B981"></a-cursor>
         </a-camera>
 
-        <!-- Left Hand Tracking -->
-        <a-entity hand-tracking-controls="hand: left" 
-                  raycaster="objects: .telekinetic; far: 5; showLine: true" 
-                  line="color: #00E5FF; opacity: 0.6"
-                  telekinesis-hand="hand: left">
+        <!-- Hand Tracking Spider Hands with Gravity -->
+        <a-entity id="left-hand"
+                  hand-tracking-controls="hand: left; modelStyle: mesh;"
+                  spider-hand-physics="hand: left">
         </a-entity>
 
-        <!-- Right Hand Tracking -->
-        <a-entity hand-tracking-controls="hand: right" 
-                  raycaster="objects: .telekinetic; far: 5; showLine: true" 
-                  line="color: #00E5FF; opacity: 0.6"
-                  telekinesis-hand="hand: right">
+        <a-entity id="right-hand"
+                  hand-tracking-controls="hand: right; modelStyle: mesh;"
+                  spider-hand-physics="hand: right">
         </a-entity>
-
-        <!-- Fallback VR Laser Controllers (if physical controllers are used instead of bare hands) -->
-        <a-entity laser-controls="hand: left" raycaster="objects: .telekinetic; far: 5" telekinesis-hand="hand: left"></a-entity>
-        <a-entity laser-controls="hand: right" raycaster="objects: .telekinetic; far: 5" telekinesis-hand="hand: right"></a-entity>
       </a-entity>
     </a-scene>
   </body>
