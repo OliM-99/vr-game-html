@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <title>Hand Spider - Desktop Crawl VR</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- A-Frame Library -->
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <style>
       body { margin: 0; overflow: hidden; background: #000; }
@@ -15,54 +14,52 @@
       let currentLevel = 1;
       const totalLevels = 3;
 
-      // Level layout configs (Table obstacles and button locations)
       const levelData = {
         1: {
-          buttonPos: { x: 0, y: 0.86, z: -1.4 },
+          buttonPos: { x: 0, y: 1.02, z: -0.7 },
           obstacles: []
         },
         2: {
-          buttonPos: { x: 0.4, y: 0.86, z: -1.5 },
+          buttonPos: { x: 0.35, y: 1.02, z: -0.8 },
           obstacles: [
-            { pos: "0 0.9 -1.2", size: "0.4 0.15 0.1", color: "#EF4444" } // Wooden barrier
+            { pos: "0 1.05 -0.6", size: "0.4 0.12 0.08", color: "#EF4444" }
           ]
         },
         3: {
-          buttonPos: { x: -0.5, y: 0.86, z: -1.6 },
+          buttonPos: { x: -0.4, y: 1.02, z: -0.85 },
           obstacles: [
-            { pos: "-0.2 0.9 -1.3", size: "0.15 0.2 0.3", color: "#F59E0B" },
-            { pos: "0.2 0.9 -1.1", size: "0.2 0.15 0.2", color: "#8B5CF6" }
+            { pos: "-0.15 1.05 -0.65", size: "0.12 0.15 0.2", color: "#F59E0B" },
+            { pos: "0.15 1.05 -0.55", size: "0.18 0.12 0.15", color: "#8B5CF6" }
           ]
         }
       };
 
-      // Physics & Surface Crawling Component for Hand
+      // Gravity & Surface Crawling Component
       AFRAME.registerComponent('spider-hand-physics', {
         schema: {
           hand: { type: 'string', default: 'right' }
         },
 
         init: function () {
-          this.tableY = 0.84; // Level of tabletop surface
-          this.velocity = new THREE.Vector3(0, 0, 0);
-          this.gravity = -9.8;
+          this.tableY = 1.0; // Table surface resting height
+          this.velocity = 0;
+          this.gravity = -4.5;
           this.isGrounded = false;
           this.prevPinchPos = null;
 
-          // Virtual physics palm representation
+          // Wireframe visualizer for palm physics center
           this.palmMesh = document.createElement('a-sphere');
-          this.palmMesh.setAttribute('radius', '0.05');
+          this.palmMesh.setAttribute('radius', '0.04');
           this.palmMesh.setAttribute('color', '#10B981');
-          this.palmMesh.setAttribute('material', 'wireframe: true; emissive: #10B981; emissiveIntensity: 0.5');
+          this.palmMesh.setAttribute('material', 'wireframe: true; emissive: #10B981; emissiveIntensity: 0.6');
           this.el.appendChild(this.palmMesh);
 
-          // Finger pinch event listeners for crawl traction
+          // Listen ONLY to hand pinch events for traction
           this.el.addEventListener('pinchstarted', (e) => this.onCrawlStart(e));
           this.el.addEventListener('pinchend', () => this.onCrawlEnd());
         },
 
         onCrawlStart: function (e) {
-          // Store start position when fingertip touches surface to pull/crawl
           const rawHandPos = new THREE.Vector3();
           this.el.object3D.getWorldPosition(rawHandPos);
           this.prevPinchPos = rawHandPos.clone();
@@ -74,92 +71,83 @@
 
         tick: function (time, delta) {
           if (!delta) return;
-          const dt = delta / 1000; // convert to seconds
+          const dt = delta / 1000;
 
-          const handPos = this.el.object3D.position;
+          const handObj = this.el.object3D;
           const rawHandPos = new THREE.Vector3();
-          this.el.object3D.getWorldPosition(rawHandPos);
+          handObj.getWorldPosition(rawHandPos);
 
-          // 1. Apply Gravity towards the table surface
-          if (handPos.y > this.tableY) {
-            this.velocity.y += this.gravity * dt;
+          // Force gravity downwards onto tabletop if tracked raw position is floating high
+          if (handObj.position.y > this.tableY) {
+            this.velocity += this.gravity * dt;
             this.isGrounded = false;
           } else {
-            // Resting flat on table
-            handPos.y = this.tableY;
-            this.velocity.y = 0;
+            // Clamp to tabletop
+            handObj.position.y = this.tableY;
+            this.velocity = 0;
             this.isGrounded = true;
           }
 
-          // Apply fall velocity
-          handPos.y += this.velocity.y * dt;
+          // Apply downwards fall towards table
+          handObj.position.y += this.velocity * dt;
 
-          // 2. Spider Crawling Movement
-          // When pinched/crawling on table, drag hand position along surface based on finger motion
-          if (this.isGrounded && this.prevPinchPos) {
+          // Crawling motion across the desk surface
+          if (this.prevPinchPos) {
             const deltaX = rawHandPos.x - this.prevPinchPos.x;
             const deltaZ = rawHandPos.z - this.prevPinchPos.z;
 
-            // Push/Pull palm forward across the table surface
-            handPos.x += deltaX * 1.5;
-            handPos.z += deltaZ * 1.5;
+            // Pull spider palm along desk surface
+            handObj.position.x += deltaX * 1.8;
+            handObj.position.z += deltaZ * 1.8;
 
             this.prevPinchPos.copy(rawHandPos);
           }
 
-          // 3. Check Collision with Target Button
+          // Check Button Hit
           const buttonEl = document.querySelector('#target-button');
           if (buttonEl) {
             const btnPos = buttonEl.object3D.position;
-            const dist = handPos.distanceTo(btnPos);
+            const dist = handObj.position.distanceTo(btnPos);
 
-            // Trigger button press if spider hand hits it
-            if (dist < 0.15) {
+            if (dist < 0.12) {
               this.onPressButton();
             }
           }
         },
 
         onPressButton: function () {
-          const btnMesh = document.querySelector('#button-cap');
-          if (btnMesh) {
-            btnMesh.setAttribute('position', '0 0.01 0'); // Push button down visual
+          const btnCap = document.querySelector('#button-cap');
+          if (btnCap) {
+            btnCap.setAttribute('position', '0 0.01 0');
           }
 
-          // Advance level
           setTimeout(() => {
             if (currentLevel < totalLevels) {
               currentLevel++;
               loadLevel(currentLevel);
             } else {
-              // Game complete
               const txt = document.querySelector('#hud-text');
-              if (txt) txt.setAttribute('value', 'VICTORY!\nYou beat all levels!');
+              if (txt) txt.setAttribute('value', 'VICTORY!\nYou cleared all levels!');
             }
-          }, 300);
+          }, 350);
         }
       });
 
-      // Function to dynamically load obstacles and level targets
       function loadLevel(levelNum) {
         const data = levelData[levelNum];
         
-        // Update HUD
         const txt = document.querySelector('#hud-text');
-        if (txt) txt.setAttribute('value', `LEVEL ${levelNum} / ${totalLevels}\nCrawl your hand spider to the red button!`);
+        if (txt) txt.setAttribute('value', `LEVEL ${levelNum} / ${totalLevels}\nCrawl your hand spider to press the red button!`);
 
-        // Move Button
         const buttonGroup = document.querySelector('#target-button');
         buttonGroup.setAttribute('position', `${data.buttonPos.x} ${data.buttonPos.y} ${data.buttonPos.z}`);
         
-        const btnMesh = document.querySelector('#button-cap');
-        if (btnMesh) btnMesh.setAttribute('position', '0 0.04 0');
+        const btnCap = document.querySelector('#button-cap');
+        if (btnCap) btnCap.setAttribute('position', '0 0.03 0');
 
-        // Clear existing obstacles
         const obsContainer = document.querySelector('#obstacles-container');
         obsContainer.innerHTML = '';
 
-        // Spawn Level Obstacles
         data.obstacles.forEach((obs) => {
           const box = document.createElement('a-box');
           const [w, h, d] = obs.size.split(' ');
@@ -170,10 +158,6 @@
           box.setAttribute('color', obs.color);
           obsContainer.appendChild(box);
         });
-
-        // Reset hand positions
-        const rightHand = document.querySelector('#right-hand');
-        if (rightHand) rightHand.object3D.position.set(0, 1.2, -0.8);
       }
 
       window.addEventListener('load', () => {
@@ -181,47 +165,41 @@
       });
     </script>
 
-    <a-scene webxr="optionalFeatures: hand-tracking">
-      <!-- Lighting & Dark Atmospheric Room -->
+    <!-- Strictly Require Hand Tracking -->
+    <a-scene webxr="optionalFeatures: hand-tracking; requiredFeatures: hand-tracking;">
       <a-sky color="#050811"></a-sky>
-      <a-ambient-light color="#ffffff" intensity="0.4"></a-ambient-light>
-      <a-spotlight position="0 3 -1" intensity="1.2" angle="45" penumbra="0.5" cast-shadow="true"></a-spotlight>
+      <a-ambient-light color="#ffffff" intensity="0.5"></a-ambient-light>
+      <a-spotlight position="0 2.5 -0.5" intensity="1.4" angle="45" penumbra="0.5"></a-spotlight>
 
-      <!-- Floor -->
       <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#0f172a" gridhelper="size: 20; divisions: 20; colorCenterLine: #10B981; colorGrid: #1e293b"></a-plane>
 
-      <!-- The Workbench / Table Surface -->
-      <a-entity id="table" position="0 0.8 -1.3">
-        <!-- Tabletop -->
-        <a-box width="2.0" height="0.08" depth="1.2" color="#1e293b" material="roughness: 0.4; metalness: 0.2"></a-box>
+      <!-- Desk / Tabletop (Height set to Y=1.0m directly in front of camera) -->
+      <a-entity id="table" position="0 0.96 -0.7">
+        <!-- Table surface -->
+        <a-box width="1.6" height="0.08" depth="0.8" color="#1e293b" material="roughness: 0.4; metalness: 0.2"></a-box>
         <!-- Table Legs -->
-        <a-cylinder position="-0.9 -0.4 -0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
-        <a-cylinder position="0.9 -0.4 -0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
-        <a-cylinder position="-0.9 -0.4 0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
-        <a-cylinder position="0.9 -0.4 0.5" radius="0.03" height="0.8" color="#0f172a"></a-cylinder>
+        <a-cylinder position="-0.7 -0.48 -0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
+        <a-cylinder position="0.7 -0.48 -0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
+        <a-cylinder position="-0.7 -0.48 0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
+        <a-cylinder position="0.7 -0.48 0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
       </a-entity>
 
-      <!-- Container for dynamic level obstacles -->
       <a-entity id="obstacles-container"></a-entity>
 
-      <!-- Interactive Goal Button -->
-      <a-entity id="target-button" position="0 0.86 -1.4">
-        <!-- Button Base -->
-        <a-cylinder radius="0.12" height="0.04" color="#334155"></a-cylinder>
-        <!-- Red Pressable Cap -->
-        <a-cylinder id="button-cap" position="0 0.04 0" radius="0.09" height="0.04" color="#EF4444" material="emissive: #EF4444; emissiveIntensity: 0.4"></a-cylinder>
+      <!-- Level Target Button -->
+      <a-entity id="target-button" position="0 1.02 -0.7">
+        <a-cylinder radius="0.1" height="0.03" color="#334155"></a-cylinder>
+        <a-cylinder id="button-cap" position="0 0.03 0" radius="0.075" height="0.03" color="#EF4444" material="emissive: #EF4444; emissiveIntensity: 0.5"></a-cylinder>
       </a-entity>
 
-      <!-- HUD Level Instructions -->
-      <a-text id="hud-text" value="LEVEL 1\nCrawl your hand spider to the red button!" position="0 2.1 -1.6" align="center" color="#10B981" width="4" font="mozillavr"></a-text>
+      <!-- Level HUD -->
+      <a-text id="hud-text" value="LEVEL 1\nCrawl your hand spider to press the red button!" position="0 1.75 -1.2" align="center" color="#10B981" width="3.5" font="mozillavr"></a-text>
 
       <!-- Player Rig -->
       <a-entity id="rig" position="0 0 0">
-        <a-camera position="0 1.6 0">
-          <a-cursor color="#10B981"></a-cursor>
-        </a-camera>
+        <a-camera position="0 1.5 0"></a-camera>
 
-        <!-- Hand Tracking Spider Hands with Gravity -->
+        <!-- Hand Tracking ONLY (No controllers, forced mesh tracking) -->
         <a-entity id="left-hand"
                   hand-tracking-controls="hand: left; modelStyle: mesh;"
                   spider-hand-physics="hand: left">
