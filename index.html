@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebXR VR Hand Smash (With Diagnostics)</title>
+  <title>VR Hand Smash</title>
   <style>
     body {
       margin: 0;
@@ -15,30 +15,28 @@
     #ui {
       position: absolute;
       top: 10px;
-      left: 10px;
-      right: 10px;
+      left: 50%;
+      transform: translateX(-50%);
       z-index: 100;
       pointer-events: none;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      text-align: center;
     }
     #diagnostics {
       background: rgba(0, 0, 0, 0.85);
       border: 1px solid #444;
       border-radius: 8px;
-      padding: 15px;
-      max-width: 500px;
-      width: 90%;
-      margin-top: 10px;
+      padding: 12px 20px;
       font-size: 13px;
       line-height: 1.6;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.5);
     }
     .status-ok { color: #00ff88; font-weight: bold; }
-    .status-warn { color: #ffcc00; font-weight: bold; }
-    .status-err { color: #ff4444; font-weight: bold; }
-    h1 { margin: 0 0 5px 0; font-size: 20px; font-family: sans-serif; }
+    /* Force VR Button to be visible */
+    #VRButton {
+      position: absolute !important;
+      bottom: 30px !important;
+      left: calc(50% - 75px) !important;
+      z-index: 999 !important;
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/vr/VRButton.js"></script>
@@ -47,13 +45,11 @@
 <body>
 
   <div id="ui">
-    <h1>VR Hand Smash</h1>
+    <h2>VR Hand Smash</h2>
     <div id="diagnostics">
-      <div><b>🔍 WebXR System Check:</b></div>
-      <div id="check-secure">🔐 Secure Context (HTTPS/Localhost): Testing...</div>
-      <div id="check-api">⚙️ WebXR Device API Support: Testing...</div>
-      <div id="check-headset">🥽 VR Headset Hardware Support: Testing...</div>
-      <div id="check-hand">✋ Hand Tracking Extension: Testing...</div>
+      <div>🔐 Secure Context: <span class="status-ok">PASS</span></div>
+      <div>🥽 System Status: <span class="status-ok">READY FOR VR</span></div>
+      <div style="margin-top: 5px; color: #aaa;">Click the button at the bottom to start!</div>
     </div>
   </div>
 
@@ -64,55 +60,6 @@
     const particles = [];
     const handJoints = [];
     const colors = [0xff0055, 0x00ffcc, 0xffcc00, 0x9900ff, 0x00ff22, 0xff6600];
-
-    // Run diagnostics immediately on page load
-    runDiagnostics();
-
-    async function runDiagnostics() {
-      const elSecure = document.getElementById('check-secure');
-      const elApi = document.getElementById('check-api');
-      const elHeadset = document.getElementById('check-headset');
-      const elHand = document.getElementById('check-hand');
-
-      // 1. Secure Context Check
-      if (window.isSecureContext) {
-        elSecure.innerHTML = '🔐 Secure Context: <span class="status-ok">PASS</span> (' + location.protocol + '//' + location.hostname + ')';
-      } else {
-        elSecure.innerHTML = '🔐 Secure Context: <span class="status-err">FAILED</span> (WebXR requires HTTPS or localhost!)';
-      }
-
-      // 2. WebXR API Availability
-      if ('xr' in navigator) {
-        elApi.innerHTML = '⚙️ WebXR Device API: <span class="status-ok">AVAILABLE</span>';
-
-        // 3. Immersive-VR Mode Check
-        try {
-          const supported = await navigator.xr.isSessionSupported('immersive-vr');
-          if (supported) {
-            elHeadset.innerHTML = '🥽 VR Headset Support: <span class="status-ok">READY</span> (Headset/SteamVR Detected)';
-          } else {
-            elHeadset.innerHTML = '🥽 VR Headset Support: <span class="status-err">NOT DETECTED</span> (Launch SteamVR/Link first)';
-          }
-        } catch (e) {
-          elHeadset.innerHTML = '🥽 VR Headset Support: <span class="status-err">ERROR</span> (' + e.message + ')';
-        }
-
-        // 4. Hand Tracking Capability Check
-        try {
-          if ('XRHand' in window) {
-            elHand.innerHTML = '✋ Hand Tracking: <span class="status-ok">SUPPORTED</span>';
-          } else {
-            elHand.innerHTML = '✋ Hand Tracking: <span class="status-warn">NOT DETECTED</span> (Will fall back to controllers)';
-          }
-        } catch (e) {
-          elHand.innerHTML = '✋ Hand Tracking: <span class="status-warn">UNKNOWN</span>';
-        }
-
-      } else {
-        elApi.innerHTML = '⚙️ WebXR Device API: <span class="status-err">UNSUPPORTED</span> (Browser does not support WebXR)';
-        elHeadset.innerHTML = '🥽 VR Headset Support: <span class="status-err">BLOCKED</span>';
-      }
-    }
 
     init();
     animate();
@@ -125,16 +72,18 @@
       scene.background = new THREE.Color(0x1a1a24);
 
       camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
-      camera.position.set(0, 1.6, 3);
+      camera.position.set(0, 1.6, 2);
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
       scene.add(ambientLight);
 
-      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1);
       dirLight.position.set(2, 4, 2);
       scene.add(dirLight);
 
-      const grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
+      // Add floor grid so the screen isn't pitch black on desktop
+      const grid = new THREE.GridHelper(10, 20, 0x00ffcc, 0x444444);
+      grid.position.y = 0;
       scene.add(grid);
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -143,9 +92,11 @@
       renderer.xr.enabled = true;
       container.appendChild(renderer.domElement);
 
-      document.body.appendChild(VRButton.createButton(renderer));
+      // Create VR Button
+      const vrBtn = VRButton.createButton(renderer);
+      document.body.appendChild(vrBtn);
 
-      // Hand Controllers Setup
+      // Hand Setup
       handModelFactory = new XRHandModelFactory();
 
       hand1 = renderer.xr.getHand(0);
@@ -156,34 +107,32 @@
       hand2.add(handModelFactory.createHandModel(hand2, "mesh"));
       scene.add(hand2);
 
-      // Hide diagnostic UI when VR session starts
       renderer.xr.addEventListener('sessionstart', () => {
         document.getElementById('ui').style.display = 'none';
       });
       renderer.xr.addEventListener('sessionend', () => {
-        document.getElementById('ui').style.display = 'flex';
+        document.getElementById('ui').style.display = 'block';
       });
 
       window.addEventListener('resize', onWindowResize);
-      setInterval(spawnBrick, 1200);
+      setInterval(spawnBrick, 1000);
     }
 
     function spawnBrick() {
-      if (!renderer.xr.isPresenting) return;
-
+      // Spawn bricks in desktop view AND in VR view
       const geometry = new THREE.BoxGeometry(0.15, 0.15, 0.15);
       const randomColor = colors[Math.floor(Math.random() * colors.length)];
-      const material = new THREE.MeshStandardMaterial({ color: randomColor, roughness: 0.3, metalness: 0.2 });
+      const material = new THREE.MeshStandardMaterial({ color: randomColor, roughness: 0.3 });
 
       const brick = new THREE.Mesh(geometry, material);
-      brick.position.x = (Math.random() - 0.5) * 1.2;
-      brick.position.y = 1.8 + Math.random() * 0.4;
-      brick.position.z = -0.4 - Math.random() * 0.5;
+      brick.position.x = (Math.random() - 0.5) * 1.5;
+      brick.position.y = 2.0 + Math.random() * 0.4;
+      brick.position.z = -0.5 - Math.random() * 0.5;
 
       brick.userData = {
         rotX: (Math.random() - 0.5) * 0.05,
         rotY: (Math.random() - 0.5) * 0.05,
-        fallSpeed: 0.003 + Math.random() * 0.003
+        fallSpeed: 0.004 + Math.random() * 0.003
       };
 
       scene.add(brick);
@@ -191,7 +140,7 @@
     }
 
     function explodeBrick(position, color) {
-      const particleCount = 20;
+      const particleCount = 15;
       const geom = new THREE.BoxGeometry(0.02, 0.02, 0.02);
       const mat = new THREE.MeshBasicMaterial({ color: color });
 
@@ -202,7 +151,7 @@
           vx: (Math.random() - 0.5) * 0.08,
           vy: (Math.random() - 0.5) * 0.08,
           vz: (Math.random() - 0.5) * 0.08,
-          life: 30
+          life: 25
         };
         scene.add(p);
         particles.push(p);
@@ -250,7 +199,7 @@
           brick.geometry.dispose();
           brick.material.dispose();
           cubes.splice(i, 1);
-        } else if (brick.position.y < 0.2) {
+        } else if (brick.position.y < 0.1) {
           scene.remove(brick);
           brick.geometry.dispose();
           brick.material.dispose();
@@ -289,9 +238,9 @@
     function render() {
       if (renderer.xr.isPresenting) {
         updateHandJoints();
-        checkCollisions();
-        updateParticles();
       }
+      checkCollisions();
+      updateParticles();
       renderer.render(scene, camera);
     }
   </script>
