@@ -2,165 +2,197 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>VR Box Buster</title>
-    <meta name="description" content="VR Hand & Controller Box Busting Game">
-    <!-- A-Frame VR Framework -->
+    <title>VR Hand Tracking - Telekinesis Lab</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <style>
-      body { margin: 0; overflow: hidden; }
+      body { margin: 0; overflow: hidden; background: #000; }
     </style>
   </head>
   <body>
     <script>
-      let score = 0;
+      // Global state & Telekinesis Component
+      AFRAME.registerComponent('telekinesis-hand', {
+        schema: {
+          hand: { type: 'string', default: 'right' }
+        },
 
-      // Component to handle box hit / explosion logic
-      AFRAME.registerComponent('explodable', {
         init: function () {
-          const el = this.el;
+          this.grabbedEl = null;
+          this.hoveredEl = null;
+          this.isGrabbing = false;
+          this.prevPinchState = false;
 
-          const explode = () => {
-            // Update score
-            score += 10;
-            const scoreEl = document.querySelector('#score-text');
-            if (scoreEl) scoreEl.setAttribute('value', `Score: ${score}`);
+          // Target reticle visualizer
+          this.reticle = document.createElement('a-ring');
+          this.reticle.setAttribute('radius-inner', '0.04');
+          this.reticle.setAttribute('radius-outer', '0.06');
+          this.reticle.setAttribute('material', 'color: #00E5FF; shader: flat; transparent: true; opacity: 0');
+          this.reticle.setAttribute('visible', 'false');
+          this.el.sceneEl.appendChild(this.reticle);
 
-            // Spawn visual explosion effect (expanding sphere burst)
-            const pos = el.getAttribute('position');
-            const color = el.getAttribute('color');
-            createExplosion(pos, color);
+          // Listen for WebXR pinch events (supported on Quest / Vision Pro)
+          this.el.addEventListener('pinchstarted', () => this.onPinchStart());
+          this.el.addEventListener('pinchend', () => this.onPinchEnd());
 
-            // Remove box from scene
-            if (el.parentNode) {
-              el.parentNode.removeChild(el);
+          // Desktop fallback trigger (Mouse Click / Trigger simulate grab)
+          this.el.addEventListener('triggerdown', () => this.onPinchStart());
+          this.el.addEventListener('triggerup', () => this.onPinchEnd());
+        },
+
+        onPinchStart: function () {
+          this.isGrabbing = true;
+
+          // Force Grab: Pull hovered object to hand if pointing at one
+          if (this.hoveredEl && !this.grabbedEl) {
+            this.grabbedEl = this.hoveredEl;
+            this.grabbedEl.setAttribute('telekinetic-state', 'pulling');
+            
+            // Visual feedback ring glow
+            if (this.grabbedEl.components['glow-highlight']) {
+              this.grabbedEl.components['glow-highlight'].setGlow('#FF007F');
             }
-          };
+          }
+        },
 
-          // Trigger on laser click, raycaster intersection, or hand pinch/touch
-          el.addEventListener('click', explode);
-          el.addEventListener('raycaster-intersected', function () {
-            // Explode on hover/touch if controller ray strikes it
-            explode();
-          });
-          el.addEventListener('hit', explode);
+        onPinchEnd: function () {
+          this.isGrabbing = false;
+
+          if (this.grabbedEl) {
+            // Release item
+            this.grabbedEl.setAttribute('telekinetic-state', 'idle');
+            if (this.grabbedEl.components['glow-highlight']) {
+              this.grabbedEl.components['glow-highlight'].resetGlow();
+            }
+            this.grabbedEl = null;
+          }
+        },
+
+        tick: function (time, delta) {
+          const handPos = new THREE.Vector3();
+          this.el.object3D.getWorldPosition(handPos);
+
+          // Get raycaster direction from hand
+          const raycasterComp = this.el.components.raycaster;
+          let intersectedEl = null;
+
+          if (raycasterComp && raycasterComp.intersections.length > 0) {
+            intersectedEl = raycasterComp.intersections[0].object.el;
+          }
+
+          // Handle Hover Highlighting
+          if (intersectedEl !== this.hoveredEl && !this.grabbedEl) {
+            if (this.hoveredEl && this.hoveredEl.components['glow-highlight']) {
+              this.hoveredEl.components['glow-highlight'].resetGlow();
+            }
+            this.hoveredEl = intersectedEl;
+
+            if (this.hoveredEl && this.hoveredEl.components['glow-highlight']) {
+              this.hoveredEl.components['glow-highlight'].setGlow('#00E5FF');
+            }
+          }
+
+          // Update Reticle position
+          if (this.hoveredEl && !this.grabbedEl) {
+            const targetPos = new THREE.Vector3();
+            this.hoveredEl.object3D.getWorldPosition(targetPos);
+            this.reticle.setAttribute('position', targetPos);
+            this.reticle.setAttribute('visible', 'true');
+            this.reticle.setAttribute('material', 'opacity', '0.8');
+          } else {
+            this.reticle.setAttribute('visible', 'false');
+          }
+
+          // Move pulled object towards palm
+          if (this.grabbedEl) {
+            const objPos = this.grabbedEl.object3D.position;
+            
+            // Interpolate position toward hand (Telekinetic fly speed)
+            const speed = 0.12; 
+            objPos.lerp(handPos, speed);
+
+            // Slightly float and rotate item while held in air
+            this.grabbedEl.object3D.rotation.y += 0.02;
+            this.grabbedEl.object3D.rotation.x += 0.01;
+          }
         }
       });
 
-      // Creates a temporary particle burst when a box explodes
-      function createExplosion(pos, color) {
-        const scene = document.querySelector('a-scene');
-        const burst = document.createElement('a-entity');
-        burst.setAttribute('position', pos);
-
-        // Core flash sphere
-        const flash = document.createElement('a-sphere');
-        flash.setAttribute('radius', '0.2');
-        flash.setAttribute('color', color);
-        flash.setAttribute('material', 'shader: flat; transparent: true; opacity: 0.9');
-        flash.setAttribute('animation', 'property: scale; to: 3 3 3; dur: 250; easing: easeOutQuad');
-        flash.setAttribute('animation__fade', 'property: components.material.material.opacity; to: 0; dur: 250; easing: easeInQuad');
-        burst.appendChild(flash);
-
-        // Debris particles
-        for (let i = 0; i < 8; i++) {
-          const particle = document.createElement('a-box');
-          particle.setAttribute('size', '0.08');
-          particle.setAttribute('scale', '0.08 0.08 0.08');
-          particle.setAttribute('color', color);
-          
-          const dx = (Math.random() - 0.5) * 2;
-          const dy = (Math.random() - 0.5) * 2;
-          const dz = (Math.random() - 0.5) * 2;
-          
-          particle.setAttribute('animation', `property: position; to: ${dx} ${dy} ${dz}; dur: 400; easing: easeOutQuad`);
-          particle.setAttribute('animation__scale', 'property: scale; to: 0 0 0; dur: 400; easing: easeInQuad');
-          burst.appendChild(particle);
-        }
-
-        scene.appendChild(burst);
-
-        // Clean up burst entities after animation finishes
-        setTimeout(() => {
-          if (burst.parentNode) burst.parentNode.removeChild(burst);
-        }, 450);
-      }
-
-      // Spawner component that continuously generates boxes falling in a circle around the player
-      AFRAME.registerComponent('box-spawner', {
+      // Simple highlight effect for telekinetic targets
+      AFRAME.registerComponent('glow-highlight', {
         init: function () {
-          this.colors = ['#FF2D55', '#FF9500', '#FFCC00', '#4CD964', '#5AC8FA', '#007AFF', '#5856D6', '#FF2D55'];
-          this.timer = setInterval(() => this.spawnBox(), 1200); // Spawns a box every 1.2s
+          this.originalColor = this.el.getAttribute('color') || '#ffffff';
         },
-        spawnBox: function () {
-          const scene = document.querySelector('a-scene');
-          const box = document.createElement('a-box');
-
-          // Choose a random angle around the circle (radius 2.5m to 4m around player)
-          const angle = Math.random() * Math.PI * 2;
-          const radius = 2.5 + Math.random() * 1.5;
-          const x = Math.cos(angle) * radius;
-          const z = Math.sin(angle) * radius;
-          const startY = 4 + Math.random() * 2; // Start high in the sky
-
-          const randomColor = this.colors[Math.floor(Math.random() * this.colors.length)];
-          const size = 0.3 + Math.random() * 0.25;
-
-          box.setAttribute('position', `${x} ${startY} ${z}`);
-          box.setAttribute('width', size);
-          box.setAttribute('height', size);
-          box.setAttribute('depth', size);
-          box.setAttribute('color', randomColor);
-          box.setAttribute('explodable', '');
-          box.setAttribute('class', 'clickable');
-
-          // Rotation & falling animation down to ground level
-          const fallDuration = 4000 + Math.random() * 2000;
-          box.setAttribute('animation__fall', `property: position; to: ${x} 0.2 ${z}; dur: ${fallDuration}; easing: linear`);
-          box.setAttribute('animation__rot', `property: rotation; to: ${Math.random()*360} ${Math.random()*360} ${Math.random()*360}; dur: ${fallDuration}; easing: linear`);
-
-          scene.appendChild(box);
-
-          // Auto-remove box if it hits the ground without being hit
-          setTimeout(() => {
-            if (box.parentNode) {
-              box.parentNode.removeChild(box);
-            }
-          }, fallDuration);
+        setGlow: function (colorHex) {
+          this.el.setAttribute('material', 'emissive', colorHex);
+          this.el.setAttribute('material', 'emissiveIntensity', '0.6');
         },
-        remove: function () {
-          clearInterval(this.timer);
+        resetGlow: function () {
+          this.el.setAttribute('material', 'emissive', '#000000');
+          this.el.setAttribute('material', 'emissiveIntensity', '0');
         }
       });
     </script>
 
-    <a-scene box-spawner physics="debug: false">
-      <!-- Sky and Ambient Lighting -->
-      <a-sky color="#0d1117"></a-sky>
-      <a-ambient-light color="#ffffff" intensity="0.6"></a-ambient-light>
-      <a-directional-light position="-1 4 2" intensity="0.8" cast-shadow="true"></a-directional-light>
+    <a-scene webxr="optionalFeatures: hand-tracking, hit-test">
+      <!-- Environment & Sky -->
+      <a-sky color="#0a0c10"></a-sky>
+      <a-ambient-light color="#ffffff" intensity="0.5"></a-ambient-light>
+      <a-directional-light position="-2 4 1" intensity="0.9" cast-shadow="true"></a-directional-light>
 
-      <!-- Floor grid ground -->
-      <a-plane position="0 0 0" rotation="-90 0 0" width="30" height="30" color="#161b22" gridhelper="size: 30; divisions: 30; colorCenterLine: #58a6ff; colorGrid: #30363d"></a-plane>
+      <!-- Grid Floor -->
+      <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#111827" gridhelper="size: 20; divisions: 20; colorCenterLine: #00E5FF; colorGrid: #1F2937"></a-plane>
 
-      <!-- Floating 3D Scoreboard HUD -->
-      <a-entity position="0 2.5 -2.5">
-        <a-text id="score-text" value="Score: 0" align="center" color="#58a6ff" width="6" font="mozillavr"></a-text>
+      <!-- The Workbench / Table -->
+      <a-entity id="table" position="0 0.8 -1.2">
+        <!-- Tabletop -->
+        <a-box width="2.2" height="0.08" depth="1.0" color="#1E293B" material="roughness: 0.3; metalness: 0.5"></a-box>
+        <!-- Table Legs -->
+        <a-cylinder position="-1.0 -0.4 -0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
+        <a-cylinder position="1.0 -0.4 -0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
+        <a-cylinder position="-1.0 -0.4 0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
+        <a-cylinder position="1.0 -0.4 0.4" radius="0.03" height="0.8" color="#334155"></a-cylinder>
       </a-entity>
 
-      <!-- Camera Rig -->
+      <!-- Interactive Telekinetic Objects on the Table -->
+      <a-entity id="objects-group">
+        <!-- Cube -->
+        <a-box class="telekinetic" glow-highlight position="-0.6 0.95 -1.2" width="0.18" height="0.18" depth="0.18" color="#FF2D55"></a-box>
+        <!-- Glowing Energy Orb -->
+        <a-sphere class="telekinetic" glow-highlight position="-0.2 0.95 -1.1" radius="0.1" color="#00E5FF"></a-sphere>
+        <!-- Pyramid / Cone -->
+        <a-cone class="telekinetic" glow-highlight position="0.2 0.95 -1.3" radius-bottom="0.1" height="0.2" color="#FFCC00"></a-cone>
+        <!-- Cylinder Container -->
+        <a-cylinder class="telekinetic" glow-highlight position="0.6 0.95 -1.1" radius="0.08" height="0.22" color="#A855F7"></a-cylinder>
+      </a-entity>
+
+      <!-- Floating Instructions Title -->
+      <a-text value="TELEKINESIS LAB\nPoint at an item & quick pinch/close hand to summon it" position="0 2.2 -1.8" align="center" color="#00E5FF" width="4" font="mozillavr"></a-text>
+
+      <!-- Camera & Player Setup -->
       <a-entity id="rig" position="0 0 0">
         <a-camera position="0 1.6 0">
-          <!-- Desktop / Mobile mouse pointer raycaster -->
-          <a-cursor objects=".clickable" color="#00E5FF" raycaster="objects: .clickable; far: 10"></a-cursor>
+          <!-- Cursor for testing with mouse on desktop -->
+          <a-cursor objects=".telekinetic" color="#00E5FF" raycaster="objects: .telekinetic; far: 5"></a-cursor>
         </a-camera>
 
-        <!-- VR Controllers (Laser pointers for Quest/Vive/Index) -->
-        <a-entity laser-controls="hand: left" raycaster="objects: .clickable; far: 10; showLine: true" line="color: #FF007F; opacity: 0.8"></a-entity>
-        <a-entity laser-controls="hand: right" raycaster="objects: .clickable; far: 10; showLine: true" line="color: #00E5FF; opacity: 0.8"></a-entity>
+        <!-- Left Hand Tracking -->
+        <a-entity hand-tracking-controls="hand: left" 
+                  raycaster="objects: .telekinetic; far: 5; showLine: true" 
+                  line="color: #00E5FF; opacity: 0.6"
+                  telekinesis-hand="hand: left">
+        </a-entity>
 
-        <!-- VR Hand Tracking Controls (Meta Quest / Apple Vision Pro) -->
-        <a-entity hand-tracking-controls="hand: left" raycaster="objects: .clickable; far: 5; showLine: true"></a-entity>
-        <a-entity hand-tracking-controls="hand: right" raycaster="objects: .clickable; far: 5; showLine: true"></a-entity>
+        <!-- Right Hand Tracking -->
+        <a-entity hand-tracking-controls="hand: right" 
+                  raycaster="objects: .telekinetic; far: 5; showLine: true" 
+                  line="color: #00E5FF; opacity: 0.6"
+                  telekinesis-hand="hand: right">
+        </a-entity>
+
+        <!-- Fallback VR Laser Controllers (if physical controllers are used instead of bare hands) -->
+        <a-entity laser-controls="hand: left" raycaster="objects: .telekinetic; far: 5" telekinesis-hand="hand: left"></a-entity>
+        <a-entity laser-controls="hand: right" raycaster="objects: .telekinetic; far: 5" telekinesis-hand="hand: right"></a-entity>
       </a-entity>
     </a-scene>
   </body>
