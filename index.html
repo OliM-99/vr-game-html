@@ -1,248 +1,167 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VR Hand Smash</title>
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      font-family: monospace, sans-serif;
-      background-color: #111;
-      color: #fff;
-    }
-    #ui {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 100;
-      pointer-events: none;
-      text-align: center;
-    }
-    #diagnostics {
-      background: rgba(0, 0, 0, 0.85);
-      border: 1px solid #444;
-      border-radius: 8px;
-      padding: 12px 20px;
-      font-size: 13px;
-      line-height: 1.6;
-    }
-    .status-ok { color: #00ff88; font-weight: bold; }
-    /* Force VR Button to be visible */
-    #VRButton {
-      position: absolute !important;
-      bottom: 30px !important;
-      left: calc(50% - 75px) !important;
-      z-index: 999 !important;
-    }
-  </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/vr/VRButton.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/vr/XRHandModelFactory.js"></script>
-</head>
-<body>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>VR Box Buster</title>
+    <meta name="description" content="VR Hand & Controller Box Busting Game">
+    <!-- A-Frame VR Framework -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <style>
+      body { margin: 0; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <script>
+      let score = 0;
 
-  <div id="ui">
-    <h2>VR Hand Smash</h2>
-    <div id="diagnostics">
-      <div>🔐 Secure Context: <span class="status-ok">PASS</span></div>
-      <div>🥽 System Status: <span class="status-ok">READY FOR VR</span></div>
-      <div style="margin-top: 5px; color: #aaa;">Click the button at the bottom to start!</div>
-    </div>
-  </div>
+      // Component to handle box hit / explosion logic
+      AFRAME.registerComponent('explodable', {
+        init: function () {
+          const el = this.el;
 
-  <script>
-    let scene, camera, renderer;
-    let hand1, hand2, handModelFactory;
-    const cubes = [];
-    const particles = [];
-    const handJoints = [];
-    const colors = [0xff0055, 0x00ffcc, 0xffcc00, 0x9900ff, 0x00ff22, 0xff6600];
+          const explode = () => {
+            // Update score
+            score += 10;
+            const scoreEl = document.querySelector('#score-text');
+            if (scoreEl) scoreEl.setAttribute('value', `Score: ${score}`);
 
-    init();
-    animate();
+            // Spawn visual explosion effect (expanding sphere burst)
+            const pos = el.getAttribute('position');
+            const color = el.getAttribute('color');
+            createExplosion(pos, color);
 
-    function init() {
-      const container = document.createElement('div');
-      document.body.appendChild(container);
+            // Remove box from scene
+            if (el.parentNode) {
+              el.parentNode.removeChild(el);
+            }
+          };
 
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x1a1a24);
-
-      camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
-      camera.position.set(0, 1.6, 2);
-
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-      scene.add(ambientLight);
-
-      const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-      dirLight.position.set(2, 4, 2);
-      scene.add(dirLight);
-
-      // Add floor grid so the screen isn't pitch black on desktop
-      const grid = new THREE.GridHelper(10, 20, 0x00ffcc, 0x444444);
-      grid.position.y = 0;
-      scene.add(grid);
-
-      renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.xr.enabled = true;
-      container.appendChild(renderer.domElement);
-
-      // Create VR Button
-      const vrBtn = VRButton.createButton(renderer);
-      document.body.appendChild(vrBtn);
-
-      // Hand Setup
-      handModelFactory = new XRHandModelFactory();
-
-      hand1 = renderer.xr.getHand(0);
-      hand1.add(handModelFactory.createHandModel(hand1, "mesh"));
-      scene.add(hand1);
-
-      hand2 = renderer.xr.getHand(1);
-      hand2.add(handModelFactory.createHandModel(hand2, "mesh"));
-      scene.add(hand2);
-
-      renderer.xr.addEventListener('sessionstart', () => {
-        document.getElementById('ui').style.display = 'none';
-      });
-      renderer.xr.addEventListener('sessionend', () => {
-        document.getElementById('ui').style.display = 'block';
+          // Trigger on laser click, raycaster intersection, or hand pinch/touch
+          el.addEventListener('click', explode);
+          el.addEventListener('raycaster-intersected', function () {
+            // Explode on hover/touch if controller ray strikes it
+            explode();
+          });
+          el.addEventListener('hit', explode);
+        }
       });
 
-      window.addEventListener('resize', onWindowResize);
-      setInterval(spawnBrick, 1000);
-    }
+      // Creates a temporary particle burst when a box explodes
+      function createExplosion(pos, color) {
+        const scene = document.querySelector('a-scene');
+        const burst = document.createElement('a-entity');
+        burst.setAttribute('position', pos);
 
-    function spawnBrick() {
-      // Spawn bricks in desktop view AND in VR view
-      const geometry = new THREE.BoxGeometry(0.15, 0.15, 0.15);
-      const randomColor = colors[Math.floor(Math.random() * colors.length)];
-      const material = new THREE.MeshStandardMaterial({ color: randomColor, roughness: 0.3 });
+        // Core flash sphere
+        const flash = document.createElement('a-sphere');
+        flash.setAttribute('radius', '0.2');
+        flash.setAttribute('color', color);
+        flash.setAttribute('material', 'shader: flat; transparent: true; opacity: 0.9');
+        flash.setAttribute('animation', 'property: scale; to: 3 3 3; dur: 250; easing: easeOutQuad');
+        flash.setAttribute('animation__fade', 'property: components.material.material.opacity; to: 0; dur: 250; easing: easeInQuad');
+        burst.appendChild(flash);
 
-      const brick = new THREE.Mesh(geometry, material);
-      brick.position.x = (Math.random() - 0.5) * 1.5;
-      brick.position.y = 2.0 + Math.random() * 0.4;
-      brick.position.z = -0.5 - Math.random() * 0.5;
+        // Debris particles
+        for (let i = 0; i < 8; i++) {
+          const particle = document.createElement('a-box');
+          particle.setAttribute('size', '0.08');
+          particle.setAttribute('scale', '0.08 0.08 0.08');
+          particle.setAttribute('color', color);
+          
+          const dx = (Math.random() - 0.5) * 2;
+          const dy = (Math.random() - 0.5) * 2;
+          const dz = (Math.random() - 0.5) * 2;
+          
+          particle.setAttribute('animation', `property: position; to: ${dx} ${dy} ${dz}; dur: 400; easing: easeOutQuad`);
+          particle.setAttribute('animation__scale', 'property: scale; to: 0 0 0; dur: 400; easing: easeInQuad');
+          burst.appendChild(particle);
+        }
 
-      brick.userData = {
-        rotX: (Math.random() - 0.5) * 0.05,
-        rotY: (Math.random() - 0.5) * 0.05,
-        fallSpeed: 0.004 + Math.random() * 0.003
-      };
+        scene.appendChild(burst);
 
-      scene.add(brick);
-      cubes.push(brick);
-    }
-
-    function explodeBrick(position, color) {
-      const particleCount = 15;
-      const geom = new THREE.BoxGeometry(0.02, 0.02, 0.02);
-      const mat = new THREE.MeshBasicMaterial({ color: color });
-
-      for (let i = 0; i < particleCount; i++) {
-        const p = new THREE.Mesh(geom, mat);
-        p.position.copy(position);
-        p.userData = {
-          vx: (Math.random() - 0.5) * 0.08,
-          vy: (Math.random() - 0.5) * 0.08,
-          vz: (Math.random() - 0.5) * 0.08,
-          life: 25
-        };
-        scene.add(p);
-        particles.push(p);
+        // Clean up burst entities after animation finishes
+        setTimeout(() => {
+          if (burst.parentNode) burst.parentNode.removeChild(burst);
+        }, 450);
       }
-    }
 
-    function updateHandJoints() {
-      handJoints.length = 0;
-      [hand1, hand2].forEach(hand => {
-        hand.children.forEach(child => {
-          if (child.joints) {
-            const keyJointNames = ['index-finger-tip', 'middle-finger-tip', 'wrist', 'index-finger-phalanx-distal'];
-            keyJointNames.forEach(name => {
-              if (child.joints[name] && child.joints[name].visible) {
-                const worldPos = new THREE.Vector3();
-                child.joints[name].getWorldPosition(worldPos);
-                handJoints.push(worldPos);
-              }
-            });
-          }
-        });
+      // Spawner component that continuously generates boxes falling in a circle around the player
+      AFRAME.registerComponent('box-spawner', {
+        init: function () {
+          this.colors = ['#FF2D55', '#FF9500', '#FFCC00', '#4CD964', '#5AC8FA', '#007AFF', '#5856D6', '#FF2D55'];
+          this.timer = setInterval(() => this.spawnBox(), 1200); // Spawns a box every 1.2s
+        },
+        spawnBox: function () {
+          const scene = document.querySelector('a-scene');
+          const box = document.createElement('a-box');
+
+          // Choose a random angle around the circle (radius 2.5m to 4m around player)
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 2.5 + Math.random() * 1.5;
+          const x = Math.cos(angle) * radius;
+          const z = Math.sin(angle) * radius;
+          const startY = 4 + Math.random() * 2; // Start high in the sky
+
+          const randomColor = this.colors[Math.floor(Math.random() * this.colors.length)];
+          const size = 0.3 + Math.random() * 0.25;
+
+          box.setAttribute('position', `${x} ${startY} ${z}`);
+          box.setAttribute('width', size);
+          box.setAttribute('height', size);
+          box.setAttribute('depth', size);
+          box.setAttribute('color', randomColor);
+          box.setAttribute('explodable', '');
+          box.setAttribute('class', 'clickable');
+
+          // Rotation & falling animation down to ground level
+          const fallDuration = 4000 + Math.random() * 2000;
+          box.setAttribute('animation__fall', `property: position; to: ${x} 0.2 ${z}; dur: ${fallDuration}; easing: linear`);
+          box.setAttribute('animation__rot', `property: rotation; to: ${Math.random()*360} ${Math.random()*360} ${Math.random()*360}; dur: ${fallDuration}; easing: linear`);
+
+          scene.appendChild(box);
+
+          // Auto-remove box if it hits the ground without being hit
+          setTimeout(() => {
+            if (box.parentNode) {
+              box.parentNode.removeChild(box);
+            }
+          }, fallDuration);
+        },
+        remove: function () {
+          clearInterval(this.timer);
+        }
       });
-    }
+    </script>
 
-    function checkCollisions() {
-      const hitRadius = 0.12;
+    <a-scene box-spawner physics="debug: false">
+      <!-- Sky and Ambient Lighting -->
+      <a-sky color="#0d1117"></a-sky>
+      <a-ambient-light color="#ffffff" intensity="0.6"></a-ambient-light>
+      <a-directional-light position="-1 4 2" intensity="0.8" cast-shadow="true"></a-directional-light>
 
-      for (let i = cubes.length - 1; i >= 0; i--) {
-        const brick = cubes[i];
-        brick.position.y -= brick.userData.fallSpeed;
-        brick.rotation.x += brick.userData.rotX;
-        brick.rotation.y += brick.userData.rotY;
+      <!-- Floor grid ground -->
+      <a-plane position="0 0 0" rotation="-90 0 0" width="30" height="30" color="#161b22" gridhelper="size: 30; divisions: 30; colorCenterLine: #58a6ff; colorGrid: #30363d"></a-plane>
 
-        let hit = false;
-        for (let j = 0; j < handJoints.length; j++) {
-          if (brick.position.distanceTo(handJoints[j]) < hitRadius) {
-            hit = true;
-            break;
-          }
-        }
+      <!-- Floating 3D Scoreboard HUD -->
+      <a-entity position="0 2.5 -2.5">
+        <a-text id="score-text" value="Score: 0" align="center" color="#58a6ff" width="6" font="mozillavr"></a-text>
+      </a-entity>
 
-        if (hit) {
-          explodeBrick(brick.position, brick.material.color);
-          scene.remove(brick);
-          brick.geometry.dispose();
-          brick.material.dispose();
-          cubes.splice(i, 1);
-        } else if (brick.position.y < 0.1) {
-          scene.remove(brick);
-          brick.geometry.dispose();
-          brick.material.dispose();
-          cubes.splice(i, 1);
-        }
-      }
-    }
+      <!-- Camera Rig -->
+      <a-entity id="rig" position="0 0 0">
+        <a-camera position="0 1.6 0">
+          <!-- Desktop / Mobile mouse pointer raycaster -->
+          <a-cursor objects=".clickable" color="#00E5FF" raycaster="objects: .clickable; far: 10"></a-cursor>
+        </a-camera>
 
-    function updateParticles() {
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.position.x += p.userData.vx;
-        p.position.y += p.userData.vy;
-        p.position.z += p.userData.vz;
-        p.userData.life--;
+        <!-- VR Controllers (Laser pointers for Quest/Vive/Index) -->
+        <a-entity laser-controls="hand: left" raycaster="objects: .clickable; far: 10; showLine: true" line="color: #FF007F; opacity: 0.8"></a-entity>
+        <a-entity laser-controls="hand: right" raycaster="objects: .clickable; far: 10; showLine: true" line="color: #00E5FF; opacity: 0.8"></a-entity>
 
-        if (p.userData.life <= 0) {
-          scene.remove(p);
-          p.geometry.dispose();
-          p.material.dispose();
-          particles.splice(i, 1);
-        }
-      }
-    }
-
-    function onWindowResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    function animate() {
-      renderer.setAnimationLoop(render);
-    }
-
-    function render() {
-      if (renderer.xr.isPresenting) {
-        updateHandJoints();
-      }
-      checkCollisions();
-      updateParticles();
-      renderer.render(scene, camera);
-    }
-  </script>
-</body>
+        <!-- VR Hand Tracking Controls (Meta Quest / Apple Vision Pro) -->
+        <a-entity hand-tracking-controls="hand: left" raycaster="objects: .clickable; far: 5; showLine: true"></a-entity>
+        <a-entity hand-tracking-controls="hand: right" raycaster="objects: .clickable; far: 5; showLine: true"></a-entity>
+      </a-entity>
+    </a-scene>
+  </body>
 </html>
