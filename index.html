@@ -1,213 +1,206 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Hand Spider - Desktop Crawl VR</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <style>
-      body { margin: 0; overflow: hidden; background: #000; }
-    </style>
-  </head>
-  <body>
-    <script>
-      let currentLevel = 1;
-      const totalLevels = 3;
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Thing VR - WebXR Physics Hands</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #111;
+      font-family: sans-serif;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      width: 100%;
+      text-align: center;
+      color: white;
+      z-index: 10;
+      pointer-events: none;
+    }
+  </style>
+  <!-- Three.js Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Cannon.js Physics Engine -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  <!-- Three.js WebXR Addons -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/VRButton.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/XRHandModelFactory.js"></script>
+</head>
+<body>
+  <div id="info">WebXR "Thing" Hand Tracking Demo<br/>Put on Meta Quest & Press "ENTER VR"</div>
 
-      const levelData = {
-        1: {
-          buttonPos: { x: 0, y: 1.02, z: -0.7 },
-          obstacles: []
-        },
-        2: {
-          buttonPos: { x: 0.35, y: 1.02, z: -0.8 },
-          obstacles: [
-            { pos: "0 1.05 -0.6", size: "0.4 0.12 0.08", color: "#EF4444" }
-          ]
-        },
-        3: {
-          buttonPos: { x: -0.4, y: 1.02, z: -0.85 },
-          obstacles: [
-            { pos: "-0.15 1.05 -0.65", size: "0.12 0.15 0.2", color: "#F59E0B" },
-            { pos: "0.15 1.05 -0.55", size: "0.18 0.12 0.15", color: "#8B5CF6" }
-          ]
-        }
-      };
+  <script>
+    let container, scene, camera, renderer;
+    let world, tableBody, tableMesh;
+    let hand0, hand1, handModelFactory;
+    let physicsHandBody, physicsHandMesh;
+    
+    // Locomotion tracking vars
+    let userRig;
+    let lastIndexTipY = 0;
+    let lastIndexTipZ = 0;
 
-      // Gravity & Surface Crawling Component
-      AFRAME.registerComponent('spider-hand-physics', {
-        schema: {
-          hand: { type: 'string', default: 'right' }
-        },
+    init();
 
-        init: function () {
-          this.tableY = 1.0; // Table surface resting height
-          this.velocity = 0;
-          this.gravity = -4.5;
-          this.isGrounded = false;
-          this.prevPinchPos = null;
+    function init() {
+      container = document.createElement('div');
+      document.body.appendChild(container);
 
-          // Wireframe visualizer for palm physics center
-          this.palmMesh = document.createElement('a-sphere');
-          this.palmMesh.setAttribute('radius', '0.04');
-          this.palmMesh.setAttribute('color', '#10B981');
-          this.palmMesh.setAttribute('material', 'wireframe: true; emissive: #10B981; emissiveIntensity: 0.6');
-          this.el.appendChild(this.palmMesh);
+      // --- 1. THREE.JS SCENE SETUP ---
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x202025);
 
-          // Listen for pinch/crawl gestures
-          this.el.addEventListener('pinchstarted', (e) => this.onCrawlStart(e));
-          this.el.addEventListener('pinchend', () => this.onCrawlEnd());
-        },
+      camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
+      
+      // User Camera Rig (Used to move the player around when crawling)
+      userRig = new THREE.Group();
+      userRig.position.set(0, 0, 0);
+      userRig.add(camera);
+      scene.add(userRig);
 
-        onCrawlStart: function (e) {
-          const rawHandPos = new THREE.Vector3();
-          this.el.object3D.getWorldPosition(rawHandPos);
-          this.prevPinchPos = rawHandPos.clone();
-        },
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambientLight);
 
-        onCrawlEnd: function () {
-          this.prevPinchPos = null;
-        },
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      dirLight.position.set(2, 4, 2);
+      scene.add(dirLight);
 
-        tick: function (time, delta) {
-          if (!delta) return;
-          const dt = delta / 1000;
+      // --- 2. CANNON.JS PHYSICS WORLD SETUP ---
+      world = new CANNON.World();
+      world.gravity.set(0, -9.81, 0); // Real-world gravity
+      world.broadphase = new CANNON.NaiveBroadphase();
 
-          const handObj = this.el.object3D;
-          const rawHandPos = new THREE.Vector3();
-          handObj.getWorldPosition(rawHandPos);
+      // Create Physical Table (Cannon Plane)
+      const tableMat = new CANNON.Material({ friction: 0.9, restitution: 0.1 });
+      tableBody = new CANNON.Body({ mass: 0, material: tableMat }); // Mass 0 = Static object
+      tableBody.addShape(new CANNON.Plane());
+      tableBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+      tableBody.position.set(0, 0.8, -0.5); // Table height at 0.8m
+      world.addBody(tableBody);
 
-          // Apply gravity down to tabletop surface if floating high
-          if (handObj.position.y > this.tableY) {
-            this.velocity += this.gravity * dt;
-            this.isGrounded = false;
-          } else {
-            // Rest flat on desk surface
-            handObj.position.y = this.tableY;
-            this.velocity = 0;
-            this.isGrounded = true;
-          }
+      // Visual Table (Three.js Plane)
+      const tableGeo = new THREE.BoxGeometry(1.5, 0.05, 1.2);
+      const tableMeshMat = new THREE.MeshStandardMaterial({ color: 0x5a3d28, roughness: 0.8 });
+      tableMesh = new THREE.Mesh(tableGeo, tableMeshMat);
+      tableMesh.position.set(0, 0.8, -0.5);
+      scene.add(tableMesh);
 
-          // Apply downwards fall towards table
-          handObj.position.y += this.velocity * dt;
+      // Create Physical "Hand" RigidBody (The weight box affected by gravity)
+      const handShape = new CANNON.Box(new CANNON.Vec3(0.06, 0.02, 0.08));
+      physicsHandBody = new CANNON.Body({ mass: 1.0, material: tableMat }); // 1kg Hand
+      physicsHandBody.addShape(handShape);
+      physicsHandBody.position.set(0, 1.2, -0.4); // Start elevated above table
+      world.addBody(physicsHandBody);
 
-          // Crawling motion across desk surface
-          if (this.prevPinchPos) {
-            const deltaX = rawHandPos.x - this.prevPinchPos.x;
-            const deltaZ = rawHandPos.z - this.prevPinchPos.z;
+      // Visual Physical Hand representation (Cyan Box)
+      const handMeshGeo = new THREE.BoxGeometry(0.12, 0.04, 0.16);
+      const handMeshMat = new THREE.MeshStandardMaterial({ color: 0x00e5ff, wireframe: false });
+      physicsHandMesh = new THREE.Mesh(handMeshGeo, handMeshMat);
+      scene.add(physicsHandMesh);
 
-            // Move spider palm across table surface
-            handObj.position.x += deltaX * 1.8;
-            handObj.position.z += deltaZ * 1.8;
+      // --- 3. WEBXR RENDERER & HAND SETUP ---
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      container.appendChild(renderer.domElement);
 
-            this.prevPinchPos.copy(rawHandPos);
-          }
+      // Enable WebXR button with Hand Tracking requested feature
+      document.body.appendChild(VRButton.createButton(renderer, {
+        requiredFeatures: ['hand-tracking']
+      }));
 
-          // Check Target Button Collision
-          const buttonEl = document.querySelector('#target-button');
-          if (buttonEl) {
-            const btnPos = buttonEl.object3D.position;
-            const dist = handObj.position.distanceTo(btnPos);
+      // Hand Controllers Setup
+      handModelFactory = new XRHandModelFactory();
 
-            if (dist < 0.12) {
-              this.onPressButton();
-            }
-          }
-        },
+      // Right Hand (Index 0)
+      hand0 = renderer.xr.getHand(0);
+      hand0.add(handModelFactory.createHandModel(hand0, 'mesh'));
+      userRig.add(hand0);
 
-        onPressButton: function () {
-          const btnCap = document.querySelector('#button-cap');
-          if (btnCap) {
-            btnCap.setAttribute('position', '0 0.01 0');
-          }
+      // Left Hand (Index 1)
+      hand1 = renderer.xr.getHand(1);
+      hand1.add(handModelFactory.createHandModel(hand1, 'mesh'));
+      userRig.add(hand1);
 
-          setTimeout(() => {
-            if (currentLevel < totalLevels) {
-              currentLevel++;
-              loadLevel(currentLevel);
-            } else {
-              const txt = document.querySelector('#hud-text');
-              if (txt) txt.setAttribute('value', 'VICTORY!\nYou cleared all levels!');
-            }
-          }, 350);
-        }
-      });
+      window.addEventListener('resize', onWindowResize);
 
-      function loadLevel(levelNum) {
-        const data = levelData[levelNum];
-        
-        const txt = document.querySelector('#hud-text');
-        if (txt) txt.setAttribute('value', `LEVEL ${levelNum} / ${totalLevels}\nCrawl your hand spider to press the red button!`);
+      // Start main animation loop
+      renderer.setAnimationLoop(render);
+    }
 
-        const buttonGroup = document.querySelector('#target-button');
-        buttonGroup.setAttribute('position', `${data.buttonPos.x} ${data.buttonPos.y} ${data.buttonPos.z}`);
-        
-        const btnCap = document.querySelector('#button-cap');
-        if (btnCap) btnCap.setAttribute('position', '0 0.03 0');
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
 
-        const obsContainer = document.querySelector('#obstacles-container');
-        obsContainer.innerHTML = '';
+    // --- 4. PHYSICS & LOCOMOTION LOOP ---
+    function updatePhysics() {
+      // Step Cannon.js simulation (60 FPS)
+      world.step(1 / 60);
 
-        data.obstacles.forEach((obs) => {
-          const box = document.createElement('a-box');
-          const [w, h, d] = obs.size.split(' ');
-          box.setAttribute('position', obs.pos);
-          box.setAttribute('width', w);
-          box.setAttribute('height', h);
-          box.setAttribute('depth', d);
-          box.setAttribute('color', obs.color);
-          obsContainer.appendChild(box);
-        });
+      // Sync Visual Hand Mesh to Physics Body position
+      physicsHandMesh.position.copy(physicsHandBody.position);
+      physicsHandMesh.quaternion.copy(physicsHandBody.quaternion);
+
+      // Apply Spring Force pulling Physics Hand toward real tracked Right Hand
+      if (hand0 && hand0.position) {
+        const trackedPos = new THREE.Vector3();
+        hand0.getWorldPosition(trackedPos);
+
+        const currentPos = physicsHandBody.position;
+
+        // Force = (TargetPos - CurrentPos) * SpringConstant
+        const springConstant = 250.0;
+        const forceX = (trackedPos.x - currentPos.x) * springConstant;
+        const forceY = (trackedPos.y - currentPos.y) * springConstant;
+        const forceZ = (trackedPos.z - currentPos.z) * springConstant;
+
+        physicsHandBody.applyForce(new CANNON.Vec3(forceX, forceY, forceZ), currentPos);
       }
 
-      window.addEventListener('load', () => {
-        setTimeout(() => loadLevel(1), 500);
-      });
-    </script>
+      // Check Fingertip Crawling Movement against Table
+      checkFingerCrawling();
+    }
 
-    <!-- Clean WebXR Configuration -->
-    <a-scene webxr="optionalFeatures: hand-tracking;">
-      <a-sky color="#050811"></a-sky>
-      <a-ambient-light color="#ffffff" intensity="0.5"></a-ambient-light>
-      <a-spotlight position="0 2.5 -0.5" intensity="1.4" angle="45" penumbra="0.5"></a-spotlight>
+    function checkFingerCrawling() {
+      // Access Index Finger Tip joint on Right Hand
+      const indexTip = hand0.joints['index-finger-tip'];
 
-      <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#0f172a" gridhelper="size: 20; divisions: 20; colorCenterLine: #10B981; colorGrid: #1e293b"></a-plane>
+      if (indexTip) {
+        const tipWorldPos = new THREE.Vector3();
+        indexTip.getWorldPosition(tipWorldPos);
 
-      <!-- Tabletop (Height set to Y=1.0m directly in front of view) -->
-      <a-entity id="table" position="0 0.96 -0.7">
-        <a-box width="1.6" height="0.08" depth="0.8" color="#1e293b" material="roughness: 0.4; metalness: 0.2"></a-box>
-        <a-cylinder position="-0.7 -0.48 -0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
-        <a-cylinder position="0.7 -0.48 -0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
-        <a-cylinder position="-0.7 -0.48 0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
-        <a-cylinder position="0.7 -0.48 0.3" radius="0.03" height="0.96" color="#0f172a"></a-cylinder>
-      </a-entity>
+        // Check if index fingertip is touching or pressing into top of table (Y ~ 0.8)
+        const tableSurfaceY = 0.82;
+        if (tipWorldPos.y <= tableSurfaceY) {
+          
+          // Measure backward stroke distance
+          const deltaZ = tipWorldPos.z - lastIndexTipZ;
 
-      <a-entity id="obstacles-container"></a-entity>
+          // If finger pulls BACKWARDS (+Z relative to headset), push player FORWARD (-Z)
+          if (deltaZ > 0.003 && deltaZ < 0.05) {
+            userRig.position.z -= deltaZ * 2.0; // Crawling impulse multiplier
+          }
+        }
+        
+        lastIndexTipZ = tipWorldPos.z;
+        lastIndexTipY = tipWorldPos.y;
+      }
+    }
 
-      <!-- Level Target Button -->
-      <a-entity id="target-button" position="0 1.02 -0.7">
-        <a-cylinder radius="0.1" height="0.03" color="#334155"></a-cylinder>
-        <a-cylinder id="button-cap" position="0 0.03 0" radius="0.075" height="0.03" color="#EF4444" material="emissive: #EF4444; emissiveIntensity: 0.5"></a-cylinder>
-      </a-entity>
-
-      <!-- Level HUD -->
-      <a-text id="hud-text" value="LEVEL 1\nCrawl your hand spider to press the red button!" position="0 1.75 -1.2" align="center" color="#10B981" width="3.5" font="mozillavr"></a-text>
-
-      <!-- Player Rig -->
-      <a-entity id="rig" position="0 0 0">
-        <a-camera position="0 1.5 0"></a-camera>
-
-        <!-- Pure Hand Tracking Entities -->
-        <a-entity id="left-hand"
-                  hand-tracking-controls="hand: left; modelStyle: mesh;"
-                  spider-hand-physics="hand: left">
-        </a-entity>
-
-        <a-entity id="right-hand"
-                  hand-tracking-controls="hand: right; modelStyle: mesh;"
-                  spider-hand-physics="hand: right">
-        </a-entity>
-      </a-entity>
-    </a-scene>
-  </body>
+    function render() {
+      if (renderer.xr.isPresenting) {
+        updatePhysics();
+      }
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
 </html>
