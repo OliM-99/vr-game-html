@@ -2,177 +2,152 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Thing VR - WebXR Hands</title>
+  <title>Spider Hand VR - WebXR</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background-color: #111;
-      font-family: monospace;
-    }
-    #debug-console {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      right: 10px;
-      padding: 12px;
-      background: rgba(0, 0, 0, 0.85);
-      color: #00ff88;
-      border: 1px solid #00ff88;
-      border-radius: 6px;
-      font-size: 13px;
-      z-index: 1000;
-      max-height: 150px;
-      overflow-y: auto;
-    }
+    body { margin: 0; overflow: hidden; background-color: #111; font-family: monospace; }
     #vr-button {
-      position: absolute;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 12px 24px;
-      border: 1px solid #fff;
-      border-radius: 4px;
-      background: rgba(0,0,0,0.8);
-      color: #fff;
-      font-size: 16px;
-      font-weight: bold;
-      cursor: pointer;
-      z-index: 999;
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      padding: 14px 28px; border: 2px solid #00ff88; background: rgba(0,0,0,0.9);
+      color: #00ff88; font-size: 18px; font-weight: bold; cursor: pointer; z-index: 999;
     }
   </style>
-
-  <!-- Load core standalone libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
 </head>
 <body>
-  <div id="debug-console">Loading standalone WebXR engine...</div>
-  <button id="vr-button" style="display:none;">ENTER VR</button>
+  <button id="vr-button">ENTER VR SPIDER HANDS</button>
 
   <script>
-    const logEl = document.getElementById('debug-console');
-    function log(msg, isError = false) {
-      console.log(msg);
-      logEl.innerHTML += `<br/><span style="color:${isError ? '#ff4444' : '#00ff88'}">${msg}</span>`;
-    }
-
-    window.onerror = function(msg, url, line) {
-      log("SCRIPT ERROR: " + msg + " (Line " + line + ")", true);
-    };
-
     function startApp() {
-      log("Core libraries loaded cleanly!");
-
       // 1. THREE.JS SCENE SETUP
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x1a1a20);
+      scene.background = new THREE.Color(0x111116);
 
       const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
       const userRig = new THREE.Group();
+      userRig.position.set(0, 0, 0);
       userRig.add(camera);
       scene.add(userRig);
 
-      scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
       const light = new THREE.DirectionalLight(0xffffff, 0.8);
       light.position.set(2, 4, 2);
       scene.add(light);
 
-      // 2. CANNON.JS PHYSICS SETUP
+      // 2. CANNON.JS PHYSICS (GRAVITY WORLD)
       const world = new CANNON.World();
       world.gravity.set(0, -9.81, 0);
-      const mat = new CANNON.Material();
+      const tableMat = new CANNON.Material({ friction: 0.8 });
 
-      // Physical Table
-      const tableBody = new CANNON.Body({ mass: 0, material: mat });
+      // Physical Table / Floor Surface
+      const tableBody = new CANNON.Body({ mass: 0, material: tableMat });
       tableBody.addShape(new CANNON.Plane());
       tableBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
       tableBody.position.set(0, 0.8, -0.5);
       world.addBody(tableBody);
 
-      // Visual Table
+      // Visual Wooden Table Mesh
       const tableMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(1.5, 0.05, 1.2),
-        new THREE.MeshStandardMaterial({ color: 0x5a3d28 })
+        new THREE.BoxGeometry(2.0, 0.05, 2.0),
+        new THREE.MeshStandardMaterial({ color: 0x5a3d28, roughness: 0.8 })
       );
       tableMesh.position.set(0, 0.8, -0.5);
       scene.add(tableMesh);
 
-      // Falling Physics "Thing" Hand Box
-      const handBody = new CANNON.Body({ mass: 1.0, material: mat });
-      handBody.addShape(new CANNON.Box(new CANNON.Vec3(0.06, 0.02, 0.08)));
-      handBody.position.set(0, 1.2, -0.4);
-      world.addBody(handBody);
+      // 3. PHYSICAL HAND PALM BODY (Gravity-affected "Thing")
+      const palmBody = new CANNON.Body({ mass: 1.2, material: tableMat });
+      palmBody.addShape(new CANNON.Box(new CANNON.Vec3(0.05, 0.02, 0.06)));
+      palmBody.position.set(0, 1.2, -0.5); // Drops from air onto table
+      world.addBody(palmBody);
 
-      const handMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(0.12, 0.04, 0.16),
-        new THREE.MeshStandardMaterial({ color: 0x00e5ff })
-      );
-      scene.add(handMesh);
+      // Visual Mesh representations for individual finger joints
+      const jointMeshes = [];
+      const jointGeo = new THREE.SphereGeometry(0.012, 12, 12);
+      const jointMat = new THREE.MeshStandardMaterial({ color: 0xff3366, roughness: 0.3 });
 
-      // 3. RENDERER & WEBXR SETUP
+      // Create 25 Joint Spheres representing your hand structure
+      for (let i = 0; i < 25; i++) {
+        const mesh = new THREE.Mesh(jointGeo, jointMat);
+        scene.add(mesh);
+        jointMeshes.push(mesh);
+      }
+
+      // 4. WEBXR SETUP
       const renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(window.devicePixelRatio);
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
 
-      // Setup native WebXR Hands directly through WebXR Controller API
-      const hand0 = renderer.xr.getHand(0);
-      userRig.add(hand0);
+      const trackedHand = renderer.xr.getHand(0);
+      userRig.add(trackedHand);
 
-      const hand1 = renderer.xr.getHand(1);
-      userRig.add(hand1);
+      document.getElementById('vr-button').onclick = () => {
+        navigator.xr.requestSession('immersive-vr', {
+          optionalFeatures: ['hand-tracking', 'local-floor']
+        }).then((session) => {
+          renderer.xr.setSession(session);
+          document.getElementById('vr-button').style.display = 'none';
+        });
+      };
 
-      // 4. WEBXR NATIVE ENTER VR BUTTON LOGIC
-      const vrButton = document.getElementById('vr-button');
+      // 5. SPIDER CRAWLING & GRAVITY LOOP
+      let lastTipZ = 0;
 
-      if ('xr' in navigator) {
-        navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
-          if (supported) {
-            log("WebXR VR Supported on Quest 3! Click ENTER VR below.");
-            vrButton.style.display = 'block';
-
-            vrButton.onclick = () => {
-              navigator.xr.requestSession('immersive-vr', {
-                optionalFeatures: ['hand-tracking', 'local-floor']
-              }).then((session) => {
-                renderer.xr.setSession(session);
-                vrButton.style.display = 'none';
-                log("VR Session started!");
-              }).catch(err => log("Session Start Failed: " + err.message, true));
-            };
-          } else {
-            log("ERROR: Immersive VR not supported in this browser mode.", true);
-          }
-        }).catch(err => log("XR Error: " + err.message, true));
-      } else {
-        log("ERROR: navigator.xr missing! Make sure you are using https:// in GitHub Pages.", true);
-      }
-
-      // 5. MAIN LOOP
       renderer.setAnimationLoop(function() {
         if (renderer.xr.isPresenting) {
+          // Step Physics Simulation
           world.step(1 / 60);
 
-          // Sync physical hand box visual to physics body
-          handMesh.position.copy(handBody.position);
-          handMesh.quaternion.copy(handBody.quaternion);
+          // Get WebXR Tracking Target Position for Right Hand
+          const rawHandPos = new THREE.Vector3();
+          trackedHand.getWorldPosition(rawHandPos);
 
-          // Apply force pulling physical hand toward tracked Quest hand position
-          if (hand0 && hand0.position) {
-            const targetPos = new THREE.Vector3();
-            hand0.getWorldPosition(targetPos);
-
-            const forceX = (targetPos.x - handBody.position.x) * 250.0;
-            const forceY = (targetPos.y - handBody.position.y) * 250.0;
-            const forceZ = (targetPos.z - handBody.position.z) * 250.0;
-
-            handBody.applyForce(new CANNON.Vec3(forceX, forceY, forceZ), handBody.position);
+          // Apply Spring Pull Force toward tracked hand (Gravity keeps hand on table until pulled up)
+          if (rawHandPos.length() > 0) {
+            const forceX = (rawHandPos.x - palmBody.position.x) * 200.0;
+            const forceY = (rawHandPos.y - palmBody.position.y) * 200.0;
+            const forceZ = (rawHandPos.z - palmBody.position.z) * 200.0;
+            palmBody.applyForce(new CANNON.Vec3(forceX, forceY, forceZ), palmBody.position);
           }
+
+          // Offset Joint Meshes relative to Falling Physics Palm Body
+          let indexJointIdx = 0;
+          let tipWorldZ = 0;
+
+          trackedHand.joints && Object.keys(trackedHand.joints).forEach((jointName, idx) => {
+            if (idx < 25 && jointMeshes[idx]) {
+              const joint = trackedHand.joints[jointName];
+              
+              if (joint && joint.visible) {
+                // Calculate joint position relative to the physics palm body dropping on table
+                const relativeJointPos = joint.position.clone();
+                jointMeshes[idx].position.set(
+                  palmBody.position.x + relativeJointPos.x,
+                  palmBody.position.y + relativeJointPos.y,
+                  palmBody.position.z + relativeJointPos.z
+                );
+
+                if (jointName === 'index-finger-tip') {
+                  tipWorldZ = jointMeshes[idx].position.z;
+                }
+              }
+            }
+          });
+
+          // Spider Crawl Locomotion: Dragging fingers back pushes camera forward
+          const tableSurfaceY = 0.82;
+          if (palmBody.position.y <= tableSurfaceY + 0.05) {
+            const dragZ = tipWorldZ - lastTipZ;
+            // If fingertip pulls backward along table (+Z), crawl player forward (-Z)
+            if (dragZ > 0.002 && dragZ < 0.08) {
+              userRig.position.z -= dragZ * 2.5; 
+            }
+          }
+          lastTipZ = tipWorldZ;
         }
+
         renderer.render(scene, camera);
       });
     }
