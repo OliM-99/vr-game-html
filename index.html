@@ -27,16 +27,30 @@
       max-height: 150px;
       overflow-y: auto;
     }
+    #vr-button {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 24px;
+      border: 1px solid #fff;
+      border-radius: 4px;
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      z-index: 999;
+    }
   </style>
 
-  <!-- Load Classic Universal Scripts directly (No Import Maps / ES Modules) -->
+  <!-- Load core standalone libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/VRButton.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/XRHandModelFactory.js"></script>
 </head>
 <body>
-  <div id="debug-console">Loading WebXR engine...</div>
+  <div id="debug-console">Loading standalone WebXR engine...</div>
+  <button id="vr-button" style="display:none;">ENTER VR</button>
 
   <script>
     const logEl = document.getElementById('debug-console');
@@ -45,13 +59,12 @@
       logEl.innerHTML += `<br/><span style="color:${isError ? '#ff4444' : '#00ff88'}">${msg}</span>`;
     }
 
-    // Catch global script errors
     window.onerror = function(msg, url, line) {
       log("SCRIPT ERROR: " + msg + " (Line " + line + ")", true);
     };
 
     function startApp() {
-      log("Scripts loaded. Setting up 3D scene...");
+      log("Core libraries loaded cleanly!");
 
       // 1. THREE.JS SCENE SETUP
       const scene = new THREE.Scene();
@@ -70,17 +83,16 @@
       // 2. CANNON.JS PHYSICS SETUP
       const world = new CANNON.World();
       world.gravity.set(0, -9.81, 0);
-
       const mat = new CANNON.Material();
 
-      // Table Physics
+      // Physical Table
       const tableBody = new CANNON.Body({ mass: 0, material: mat });
       tableBody.addShape(new CANNON.Plane());
       tableBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
       tableBody.position.set(0, 0.8, -0.5);
       world.addBody(tableBody);
 
-      // Table Visual
+      // Visual Table
       const tableMesh = new THREE.Mesh(
         new THREE.BoxGeometry(1.5, 0.05, 1.2),
         new THREE.MeshStandardMaterial({ color: 0x5a3d28 })
@@ -88,69 +100,83 @@
       tableMesh.position.set(0, 0.8, -0.5);
       scene.add(tableMesh);
 
-      // Hand Body Physics
+      // Falling Physics "Thing" Hand Box
       const handBody = new CANNON.Body({ mass: 1.0, material: mat });
       handBody.addShape(new CANNON.Box(new CANNON.Vec3(0.06, 0.02, 0.08)));
       handBody.position.set(0, 1.2, -0.4);
       world.addBody(handBody);
 
-      // Visual Cyan Box for Falling Hand
       const handMesh = new THREE.Mesh(
         new THREE.BoxGeometry(0.12, 0.04, 0.16),
         new THREE.MeshStandardMaterial({ color: 0x00e5ff })
       );
       scene.add(handMesh);
 
-      // 3. RENDERER & WEBXR
+      // 3. RENDERER & WEBXR SETUP
       const renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(window.devicePixelRatio);
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
 
-      // Attach VR Button
-      if (typeof VRButton !== 'undefined') {
-        document.body.appendChild(VRButton.createButton(renderer));
-        log("VR Button added!");
-      } else {
-        log("VRButton script failed to load.", true);
-      }
+      // Setup native WebXR Hands directly through WebXR Controller API
+      const hand0 = renderer.xr.getHand(0);
+      userRig.add(hand0);
 
-      // Hand tracking controllers
-      if (typeof XRHandModelFactory !== 'undefined') {
-        const handModelFactory = new XRHandModelFactory();
-        const hand0 = renderer.xr.getHand(0);
-        hand0.add(handModelFactory.createHandModel(hand0, 'mesh'));
-        userRig.add(hand0);
-      } else {
-        log("XRHandModelFactory missing.", true);
-      }
+      const hand1 = renderer.xr.getHand(1);
+      userRig.add(hand1);
 
-      // Check XR Support status
+      // 4. WEBXR NATIVE ENTER VR BUTTON LOGIC
+      const vrButton = document.getElementById('vr-button');
+
       if ('xr' in navigator) {
         navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
           if (supported) {
-            log("SUCCESS: WebXR Ready! Look at bottom of screen for 'ENTER VR' button.");
+            log("WebXR VR Supported on Quest 3! Click ENTER VR below.");
+            vrButton.style.display = 'block';
+
+            vrButton.onclick = () => {
+              navigator.xr.requestSession('immersive-vr', {
+                optionalFeatures: ['hand-tracking', 'local-floor']
+              }).then((session) => {
+                renderer.xr.setSession(session);
+                vrButton.style.display = 'none';
+                log("VR Session started!");
+              }).catch(err => log("Session Start Failed: " + err.message, true));
+            };
           } else {
-            log("WARNING: Immersive VR not supported on this browser context.", true);
+            log("ERROR: Immersive VR not supported in this browser mode.", true);
           }
         }).catch(err => log("XR Error: " + err.message, true));
       } else {
-        log("ERROR: Navigator.xr not found. Ensure site uses HTTPS!", true);
+        log("ERROR: navigator.xr missing! Make sure you are using https:// in GitHub Pages.", true);
       }
 
-      // Main Loop
+      // 5. MAIN LOOP
       renderer.setAnimationLoop(function() {
         if (renderer.xr.isPresenting) {
           world.step(1 / 60);
+
+          // Sync physical hand box visual to physics body
           handMesh.position.copy(handBody.position);
           handMesh.quaternion.copy(handBody.quaternion);
+
+          // Apply force pulling physical hand toward tracked Quest hand position
+          if (hand0 && hand0.position) {
+            const targetPos = new THREE.Vector3();
+            hand0.getWorldPosition(targetPos);
+
+            const forceX = (targetPos.x - handBody.position.x) * 250.0;
+            const forceY = (targetPos.y - handBody.position.y) * 250.0;
+            const forceZ = (targetPos.z - handBody.position.z) * 250.0;
+
+            handBody.applyForce(new CANNON.Vec3(forceX, forceY, forceZ), handBody.position);
+          }
         }
         renderer.render(scene, camera);
       });
     }
 
-    // Run setup once window completely finishes loading scripts
     window.onload = startApp;
   </script>
 </body>
